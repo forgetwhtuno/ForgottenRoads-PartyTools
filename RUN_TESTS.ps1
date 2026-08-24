@@ -94,7 +94,7 @@ if ($cameraSource -notmatch '\[HarmonyPatch\(typeof\(CameraController\),\s*"Usin
 foreach ($token in @('UIWindows','activeSelf','ModernControls','releaseMouse','GetAxis','DraggingUIElement')) {
     if ($cameraSource -notmatch [regex]::Escape($token)) { throw "Party Tools camera guard failed: native proof token missing: $token" }
 }
-if ($partyPluginSource -notmatch 'PluginVersion\s*=\s*"0\.1\.6"' -or
+if ($partyPluginSource -notmatch 'PluginVersion\s*=\s*"0\.1\.8"' -or
     $partyPluginSource -notmatch 'Party Tools " \+ PluginVersion \+ " loaded') {
     throw "Party Tools RC version guard failed."
 }
@@ -136,6 +136,43 @@ if ($panelSource -notmatch 'PartyToolsDragGuard' -or
     throw "Party Tools input guard failed: proven drag owner is no longer attached to the header."
 }
 Write-Host "Party Tools canonical collapse/header chrome: PASS" -ForegroundColor Green
+
+# Friends Online semantic guards: native membership is authority; Party Tools owns deterministic
+# roleplay availability and must not regress to native online/grouped state or an AI dependency.
+$friendAvailabilitySource = Get-Content (Join-Path $ScriptRoot "src\FriendAvailability.cs") -Raw
+$friendRosterSource = Get-Content (Join-Path $ScriptRoot "src\PartyStateReader.cs") -Raw
+$friendApiSource = Get-Content (Join-Path $ScriptRoot "src\PartyToolsFriendAvailabilityApi.cs") -Raw
+if ($friendRosterSource -notmatch 'tracking\.FriendedBy' -or $friendRosterSource -notmatch 'tracking\.IsGMCharacter' -or
+    $friendRosterSource -notmatch 'if\s*\(!isFriend\)\s*continue') {
+    throw "Party Tools Friends Online guard failed: native Friends roster is not the candidate authority."
+}
+if ($friendRosterSource -match 'tracking\.online' -or $friendRosterSource -match 'tracking\.Grouped') {
+    throw "Party Tools Friends Online guard failed: native observable availability leaked back into roleplay availability."
+}
+if ($friendRosterSource -notmatch 'SceneManager\.GetActiveScene\(\)' -or
+    $friendRosterSource -notmatch 'sim\.gameObject\.scene\.handle\s*==\s*activeScene\.handle') {
+    throw "Party Tools Friends Online presence guard failed: active-zone proof is missing."
+}
+foreach ($token in @('EpochHours = 4','OnlinePercent = 65','DeterministicSalt','TryComposeCharacterKey','TryComposeFriendKey','ApplyObservedPresence')) {
+    if ($friendAvailabilitySource -notmatch [regex]::Escape($token)) { throw "Party Tools Friends Online deterministic model guard failed: missing $token" }
+}
+foreach ($forbidden in @('DeepSims','Ollama','HttpClient','UnityWebRequest','System.Random','new Random')) {
+    if (($friendAvailabilitySource + $friendRosterSource + $friendApiSource) -match [regex]::Escape($forbidden)) {
+        throw "Party Tools Friends Online dependency guard failed: forbidden token $forbidden"
+    }
+}
+if ($friendApiSource -notmatch 'ContractVersion\s*=\s*2' -or $friendApiSource -notmatch 'IsAvailable' -or
+    $friendApiSource -notmatch 'GetFriendAvailability' -or $friendApiSource -notmatch 'GetBaseAvailabilityAtUtc' -or
+    $friendApiSource -notmatch 'GetBaseAvailabilitySnapshotAtUtc') {
+    throw "Party Tools Friends Online API guard failed."
+}
+if ($friendRosterSource -notmatch 'BuildBaseFriendAvailabilitySnapshotAtUtc' -or
+    $friendRosterSource -notmatch 'TryGetBaseStateAtUtc' -or
+    $friendRosterSource -notmatch 'Current party and' -or
+    $friendRosterSource -notmatch 'do not rewrite history') {
+    throw "Party Tools historical availability guard failed."
+}
+Write-Host "Party Tools Friends Online roleplay-availability source guards: PASS" -ForegroundColor Green
 
 # Retained-UI source contract (tests/verify_retained_ui_source.py). Run it whenever Python is
 # available so the contract cannot silently rot; skip with a warning otherwise rather than making

@@ -1,4 +1,4 @@
-# Erenshor Party Tools 0.1.6
+# Erenshor Party Tools 0.1.8
 
 Part of the **Forgotten Roads for Erenshor** mod collection.
 
@@ -76,12 +76,20 @@ play:
 Entries under `UI.Legacy` and `FriendAvailability` are retained only so older config files keep
 loading. They no longer affect behavior.
 
+## Optional Friend availability API
+
+Contract v2 preserves the original current-state calls and adds read-only historical base availability
+for native Friends at exact UTC ticks: `GetBaseAvailabilityAtUtc(name, utcTicks)` and
+`GetBaseAvailabilitySnapshotAtUtc(utcTicks)`. Historical answers are deterministic `Online`/`Offline`
+base state only; current party membership and scene presence never rewrite history. Missing native
+roster authority fails closed, and the API has no Deep Sims, network, or AI dependency.
+
 ## Build from source
 
 `BUILD_AND_INSTALL.ps1` compiles the plugin against your installed Erenshor/Lunaris assemblies and
 installs it to `<Erenshor>\plugins\ErenshorPartyTools.dll`. This repository intentionally does not
 redistribute Erenshor, Unity, or Lunaris assemblies. The plugin identifier is
-`forgetwhtuno.erenshor.partytools`, version `0.1.6`. A legacy BepInEx release remains available in
+`forgetwhtuno.erenshor.partytools`, version `0.1.8`. A legacy BepInEx release remains available in
 this repository's Git history.
 
 Run the deterministic test suite with `RUN_TESTS.ps1`.

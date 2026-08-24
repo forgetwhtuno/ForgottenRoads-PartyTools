@@ -28,6 +28,9 @@ namespace ErenshorPartyTools
         private static float _readyStartedAt = -1f;
         private static float _lastActivatedAt = -1f;
         private static int _rollSides;
+        private static int _friendAvailableCount;
+        private static int _friendTotalCount;
+        private static bool _friendRosterAvailable;
         private static bool _open;
         private static bool _built;
         private static bool _launcherVisible;
@@ -98,9 +101,11 @@ namespace ErenshorPartyTools
             Rows.Clear(); if (rows != null) Rows.AddRange(rows); _rollSides = sides; _mode = PanelMode.PartyRoll; _sceneName = CurrentSceneName(); _open = true; TouchActivation(); SetResultRows();
         }
 
-        internal static void ShowPartyWho(List<PanelRow> rows)
+        internal static void ShowPartyWho(List<PanelRow> rows, int availableCount, int totalCount)
         {
-            Rows.Clear(); if (rows != null) Rows.AddRange(rows); _mode = PanelMode.PartyWho; _sceneName = CurrentSceneName(); _nextPartyWhoRefresh = Time.unscaledTime + ReadyRefreshSeconds; _open = true; TouchActivation(); SetResultRows();
+            Rows.Clear(); if (rows != null) Rows.AddRange(rows);
+            _friendRosterAvailable = true; _friendAvailableCount = availableCount; _friendTotalCount = totalCount;
+            _mode = PanelMode.PartyWho; _sceneName = CurrentSceneName(); _nextPartyWhoRefresh = Time.unscaledTime + ReadyRefreshSeconds; _open = true; TouchActivation(); SetResultRows();
         }
 
         internal static void Tick(bool launcherVisible)
@@ -274,7 +279,8 @@ namespace ErenshorPartyTools
                 if (raid) _status.text = "Raid active. Ready Check and Party Roll stay limited to normal parties.";
                 else if (_mode == PanelMode.ReadyCheck) _status.text = "Local readiness refreshes briefly; remote players are identified but never answered for.";
                 else if (_mode == PanelMode.LocalRoll || _mode == PanelMode.PartyRoll) _status.text = "Roll results are a snapshot from this action.";
-                else _status.text = "Friend availability refreshes automatically while this panel is open.";
+                else if (_friendRosterAvailable) _status.text = "Native Friends roster; Party Tools roleplay availability. " + _friendAvailableCount + " / " + _friendTotalCount + " available.";
+                else _status.text = "Native Friends roster is not ready yet.";
             }
             if (_title != null) _title.text = "PARTY TOOLS" + (raid ? "  •  RAID LIMITS" : string.Empty);
             if (_launcherStateText != null) _launcherStateText.text = "Launcher [" + (plugin == null || plugin.ShowLauncherPreference ? "ON" : "OFF") + "]";
@@ -297,7 +303,10 @@ namespace ErenshorPartyTools
         private static void RefreshPartyWhoRows()
         {
             bool rosterAvailable;
-            List<PanelRow> current = PartyStateReader.BuildNativeFriendAvailabilityRows(out rosterAvailable);
+            int availableCount;
+            int totalCount;
+            List<PanelRow> current = PartyStateReader.BuildFriendAvailabilityRows(out rosterAvailable, out availableCount, out totalCount);
+            _friendRosterAvailable = rosterAvailable; _friendAvailableCount = availableCount; _friendTotalCount = totalCount;
             Rows.Clear();
             if (rosterAvailable && current != null) Rows.AddRange(current);
         }

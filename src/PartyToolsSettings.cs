@@ -57,19 +57,19 @@ namespace ErenshorPartyTools
         public bool RollChatterEnabled = true;
 
         [Config("Enabled", "FriendAvailability",
-            "Compatibility toggle retained for existing config files. /ptwho reads the native Friends roster directly and does not simulate availability.")]
+            "Legacy compatibility value; ignored. Friends Online always uses Party Tools deterministic roleplay availability over the native Friends roster.")]
         public bool FriendAvailabilityEnabled = true;
 
         [Config("SessionHours", "FriendAvailability",
-            "Legacy compatibility value; unused by the current-party /ptwho implementation.")]
-        public int FriendAvailabilitySessionHours = FriendAvailability.DefaultSessionHours;
+            "Legacy compatibility value; ignored. Friends Online uses a fixed four-hour deterministic epoch.")]
+        public int FriendAvailabilitySessionHours = 3;
 
         [Config("Seed", "FriendAvailability",
-            "Legacy compatibility value; unused by the current-party /ptwho implementation.")]
+            "Legacy compatibility value; ignored. Friends Online uses a fixed versioned deterministic salt.")]
         public string FriendAvailabilitySeed = string.Empty;
 
         [Config("Friends", "FriendAvailability",
-            "Legacy compatibility value; unused by the current-party /ptwho implementation.")]
+            "Legacy compatibility value; ignored. Only Erenshor's native Friends roster supplies candidates.")]
         public string FriendAvailabilityFriends = string.Empty;
     }
 }

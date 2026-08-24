@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.8 - historical Friend availability contract
+
+- Added an optional v2 read-only API for deterministic native-Friend base availability at an exact UTC instant.
+- Added a bounded native-Friends snapshot for optional consumers; historical answers never use current party or scene-presence overrides.
+- Preserved the v1 current-availability methods and kept the feature independent of Deep Sims, network access, and AI services.
+
 ## 0.1.6 - first public release
 
 **Added**

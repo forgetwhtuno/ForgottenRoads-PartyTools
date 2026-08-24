@@ -97,6 +97,8 @@ New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
 $TempDll = Join-Path $TempDir "ErenshorPartyTools.dll"
 $rsp = Join-Path $TempDir "ErenshorPartyTools.rsp"
 $out = Join-Path $pluginRoot "ErenshorPartyTools.dll"
+$candidateHash = ""
+$installedHash = ""
 
 try {
     $lines = @(
@@ -120,14 +122,20 @@ try {
         throw "Compilation failed. Copy the compiler errors and send them back for correction."
     }
     if (-not (Test-Path $TempDll)) { throw "Compiler reported success but did not produce $TempDll" }
+    $candidateHash = (Get-FileHash -LiteralPath $TempDll -Algorithm SHA256).Hash.ToLowerInvariant()
 
     # Copy only after a complete successful compile so Lunaris' file watcher never sees a partial DLL.
     Copy-Item -LiteralPath $TempDll -Destination $out -Force
+    $installedHash = (Get-FileHash -LiteralPath $out -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($candidateHash -ne $installedHash) { throw "Installed DLL hash does not match the freshly compiled candidate." }
 }
 finally {
     if (Test-Path $TempDir) { Remove-Item -LiteralPath $TempDir -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
 Write-Host "Installed Erenshor Party Tools to $out" -ForegroundColor Green
+Write-Host "  Candidate SHA256: $candidateHash"
+Write-Host "  Installed SHA256: $installedHash"
+Write-Host "  Match installed: $($candidateHash -eq $installedHash)"
 Write-Host "Lunaris runtime libraries are NOT copied into the plugin folder by this script." -ForegroundColor Green
 

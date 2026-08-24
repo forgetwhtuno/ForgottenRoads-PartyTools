@@ -14,7 +14,7 @@ namespace ErenshorPartyTools
     {
         internal const string PluginGuid = "forgetwhtuno.erenshor.partytools";
         internal const string PluginName = "Erenshor Party Tools";
-        internal const string PluginVersion = "0.1.6";
+        internal const string PluginVersion = "0.1.8";
         internal const int MaximumRollSides = 1000000;
         private const float UpdateErrorLogIntervalSeconds = 30f;
 
@@ -341,7 +341,9 @@ namespace ErenshorPartyTools
             try
             {
                 bool rosterAvailable;
-                List<PanelRow> rows = PartyStateReader.BuildNativeFriendAvailabilityRows(out rosterAvailable);
+                int availableCount;
+                int totalCount;
+                List<PanelRow> rows = PartyStateReader.BuildFriendAvailabilityRows(out rosterAvailable, out availableCount, out totalCount);
                 if (!rosterAvailable)
                 {
                     Chat("[Party Tools] Friend roster is not ready yet.", "yellow");
@@ -352,7 +354,7 @@ namespace ErenshorPartyTools
                     Chat("[Party Tools] Erenshor's Friends filter is empty for this character.", "yellow");
                     return;
                 }
-                PartyToolsPanel.ShowPartyWho(rows);
+                PartyToolsPanel.ShowPartyWho(rows, availableCount, totalCount);
             }
             catch (Exception ex) { Logging.LogError("Party Tools /ptwho handling failed (" + ex.GetType().Name + ")."); }
         }

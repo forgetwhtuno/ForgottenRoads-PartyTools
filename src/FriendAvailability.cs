@@ -1,80 +1,109 @@
 using System;
-using System.Collections.Generic;
+using System.Globalization;
 
 namespace ErenshorPartyTools
 {
     internal enum FriendAvailabilityState
     {
-        Available,
-        Busy,
-        Offline
+        Unknown,
+        Offline,
+        Online,
+        InParty
     }
 
-    // Pure deterministic availability model. It deliberately has no Unity, game-save,
-    // or scene-object dependency so a friend's result survives restart and zoning.
+    // Pure deterministic roleplay-availability model. Native Erenshor decides who is a
+    // Friend; this class only decides whether that already-authorized Friend is simulated
+    // Online for the current character/epoch. It has no Unity, save-file, LLM, or network
+    // dependency and persists no per-friend state.
     internal static class FriendAvailability
     {
-        internal const int DefaultSessionHours = 3;
+        internal const int EpochHours = 4;
+        internal const int OnlinePercent = 65;
+        internal const string DeterministicSalt = "ForgottenRoads.PartyTools.FriendsOnline.v1";
 
-        internal static List<string> ParseConfiguredFriends(string configuredNames)
+        internal static bool TryComposeCharacterKey(int slotIndex, string characterName, out string key)
         {
-            List<string> result = new List<string>();
-            if (string.IsNullOrWhiteSpace(configuredNames)) return result;
-
-            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            string[] names = configuredNames.Split(',');
-            for (int i = 0; i < names.Length; i++)
-            {
-                string name = names[i] == null ? string.Empty : names[i].Trim();
-                if (string.IsNullOrWhiteSpace(name) || name.Length > 80 || !seen.Add(name)) continue;
-                result.Add(name);
-            }
-            return result;
-        }
-
-        internal static bool TryGetSimulatedState(
-            string simIdentity,
-            string persistentSeed,
-            long sessionBlock,
-            bool enabled,
-            out FriendAvailabilityState state)
-        {
-            state = FriendAvailabilityState.Offline;
-            string identity = NormalizeIdentity(simIdentity);
-            string seed = NormalizeIdentity(persistentSeed);
-            if (identity == null || seed == null) return false;
-            if (!enabled)
-            {
-                state = FriendAvailabilityState.Available;
-                return true;
-            }
-
-            // 0-34 OFFLINE, 35-59 BUSY, 60-99 AVAILABLE.
-            uint roll = StableHash(seed + "|" + identity + "|" + sessionBlock.ToString()) % 100u;
-            state = roll < 35u
-                ? FriendAvailabilityState.Offline
-                : roll < 60u ? FriendAvailabilityState.Busy : FriendAvailabilityState.Available;
+            key = null;
+            string normalizedName = NormalizeIdentity(characterName, 80);
+            if (slotIndex < 0 || normalizedName == null) return false;
+            key = "SLOT:" + slotIndex.ToString(CultureInfo.InvariantCulture) + "|CHAR:" + normalizedName;
             return true;
         }
 
-        internal static FriendAvailabilityState ApplyVerifiedBusy(
+        internal static bool TryComposeFriendKey(int simIndex, string simName, out string key)
+        {
+            key = null;
+            string normalizedName = NormalizeIdentity(simName, 80);
+            if (normalizedName == null) return false;
+
+            // simIndex is a native persistent tracking identity. Keep a name fallback for
+            // unusual/legacy tracking records whose index is unavailable, but never use a
+            // scene object identity.
+            key = simIndex >= 0 ? "SIM:" + simIndex.ToString(CultureInfo.InvariantCulture) : "NAME:" + normalizedName;
+            return true;
+        }
+
+        internal static long GetEpoch(DateTime utcNow)
+        {
+            DateTime utc = utcNow.Kind == DateTimeKind.Utc ? utcNow : utcNow.ToUniversalTime();
+            return utc.Ticks / (TimeSpan.TicksPerHour * EpochHours);
+        }
+
+        internal static bool TryGetBaseStateAtUtc(
+            string characterKey,
+            string friendKey,
+            long utcTicks,
+            out FriendAvailabilityState state)
+        {
+            state = FriendAvailabilityState.Unknown;
+            if (utcTicks < DateTime.MinValue.Ticks || utcTicks > DateTime.MaxValue.Ticks) return false;
+            return TryGetSimulatedState(characterKey, friendKey, GetEpoch(new DateTime(utcTicks, DateTimeKind.Utc)), out state);
+        }
+
+        internal static bool TryGetSimulatedState(
+            string characterKey,
+            string friendKey,
+            long epoch,
+            out FriendAvailabilityState state)
+        {
+            state = FriendAvailabilityState.Unknown;
+            string character = NormalizeIdentity(characterKey, 200);
+            string friend = NormalizeIdentity(friendKey, 200);
+            if (character == null || friend == null || epoch < 0) return false;
+
+            uint roll = StableHash(DeterministicSalt + "|" + character + "|" + friend + "|" + epoch.ToString(CultureInfo.InvariantCulture)) % 100u;
+            state = roll < OnlinePercent ? FriendAvailabilityState.Online : FriendAvailabilityState.Offline;
+            return true;
+        }
+
+        internal static FriendAvailabilityState ApplyObservedPresence(
             FriendAvailabilityState simulatedState,
-            bool nativeBusy)
+            bool inCurrentParty,
+            bool physicallyPresent)
         {
-            return nativeBusy ? FriendAvailabilityState.Busy : simulatedState;
+            if (inCurrentParty) return FriendAvailabilityState.InParty;
+            if (physicallyPresent) return FriendAvailabilityState.Online;
+            return simulatedState;
         }
 
-        internal static long GetSessionBlock(DateTime utcNow, int sessionHours)
+        internal static bool IsAvailable(FriendAvailabilityState state)
         {
-            int hours = sessionHours < 1 ? 1 : (sessionHours > 24 ? 24 : sessionHours);
-            return utcNow.ToUniversalTime().Ticks / (TimeSpan.TicksPerHour * hours);
+            return state == FriendAvailabilityState.Online || state == FriendAvailabilityState.InParty;
         }
 
-        private static string NormalizeIdentity(string value)
+        internal static bool SameNativeFriendIdentity(int leftIndex, string leftName, int rightIndex, string rightName)
+        {
+            if (leftIndex >= 0 && rightIndex >= 0) return leftIndex == rightIndex;
+            string left = NormalizeIdentity(leftName, 80);
+            string right = NormalizeIdentity(rightName, 80);
+            return left != null && right != null && string.Equals(left, right, StringComparison.Ordinal);
+        }
+
+        private static string NormalizeIdentity(string value, int maxLength)
         {
             if (string.IsNullOrWhiteSpace(value)) return null;
-            string normalized = value.Trim();
-            return normalized.Length == 0 || normalized.Length > 160 ? null : normalized.ToUpperInvariant();
+            string normalized = value.Trim().ToUpperInvariant();
+            return normalized.Length == 0 || normalized.Length > maxLength ? null : normalized;
         }
 
         private static uint StableHash(string value)

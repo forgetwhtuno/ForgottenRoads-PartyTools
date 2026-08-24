@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace ErenshorPartyTools
 {
@@ -83,12 +84,17 @@ namespace ErenshorPartyTools
             return rows;
         }
 
-        // This mirrors Group Builder's native Friends filter.  The roster belongs to the
-        // current character, not to the active party, so it is the authoritative source for
-        // finding Sims who may be available to group with.
-        internal static List<PanelRow> BuildNativeFriendAvailabilityRows(out bool rosterAvailable)
+        // Native Erenshor determines the roster. Party Tools then applies its own deterministic
+        // roleplay availability to those Friends only. Native online/grouped state is deliberately
+        // not used as the roleplay-online decision.
+        internal static List<PanelRow> BuildFriendAvailabilityRows(
+            out bool rosterAvailable,
+            out int availableCount,
+            out int totalCount)
         {
             rosterAvailable = false;
+            availableCount = 0;
+            totalCount = 0;
             List<PanelRow> rows = new List<PanelRow>();
             try
             {
@@ -96,30 +102,189 @@ namespace ErenshorPartyTools
                     return rows;
 
                 int currentSlot = GameData.CurrentCharacterSlot.index;
-                rosterAvailable = currentSlot >= 0;
-                if (!rosterAvailable) return rows;
+                string characterKey;
+                if (!FriendAvailability.TryComposeCharacterKey(currentSlot, GameData.CurrentCharacterSlot.CharName, out characterKey))
+                    return rows;
 
-                HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                rosterAvailable = true;
+                long epoch = FriendAvailability.GetEpoch(DateTime.UtcNow);
+                HashSet<string> seen = new HashSet<string>(StringComparer.Ordinal);
                 List<SimPlayerTracking> sims = GameData.SimMngr.Sims;
                 for (int i = 0; i < sims.Count; i++)
                 {
                     SimPlayerTracking tracking = sims[i];
-                    string name = ReadTrackingName(tracking);
-                    if (name.Length == 0 || !seen.Add(name)) continue;
-                    if (!NativeFriendRosterPolicy.IsCurrentCharacterFriend(
-                        tracking.FriendedBy, currentSlot, tracking.IsGMCharacter)) continue;
+                    if (tracking == null) continue;
 
-                    FriendAvailabilityState state = NativeFriendRosterPolicy.Availability(tracking.online, tracking.Grouped);
-                    string value = state == FriendAvailabilityState.Busy ? "BUSY - GROUPED" : FriendAvailabilityText(state);
-                    rows.Add(new PanelRow(name, value, state != FriendAvailabilityState.Available));
+                    string name = ReadTrackingName(tracking);
+                    if (name.Length == 0) continue;
+
+                    bool isFriend;
+                    try
+                    {
+                        isFriend = NativeFriendRosterPolicy.IsCurrentCharacterFriend(
+                            tracking.FriendedBy, currentSlot, tracking.IsGMCharacter);
+                    }
+                    catch { continue; }
+                    if (!isFriend) continue;
+
+                    string friendKey;
+                    int simIndex;
+                    try { simIndex = tracking.simIndex; }
+                    catch { continue; }
+                    if (!FriendAvailability.TryComposeFriendKey(simIndex, name, out friendKey) || !seen.Add(friendKey)) continue;
+
+                    FriendAvailabilityState simulated;
+                    if (!FriendAvailability.TryGetSimulatedState(characterKey, friendKey, epoch, out simulated)) continue;
+
+                    bool inCurrentParty = IsCurrentPartyTracking(tracking);
+                    SimPlayer avatar = SafeAvatar(tracking);
+                    if (!inCurrentParty && avatar != null) inCurrentParty = IsCurrentPartySim(avatar);
+                    bool physicallyPresent = IsPhysicallyPresentLocalFriend(avatar);
+                    FriendAvailabilityState state = FriendAvailability.ApplyObservedPresence(simulated, inCurrentParty, physicallyPresent);
+
+                    totalCount++;
+                    if (FriendAvailability.IsAvailable(state)) availableCount++;
+                    rows.Add(new PanelRow(name, FriendAvailabilityText(state), !FriendAvailability.IsAvailable(state)));
                 }
             }
             catch
             {
                 rosterAvailable = false;
+                availableCount = 0;
+                totalCount = 0;
                 rows.Clear();
             }
             return rows;
+        }
+
+        internal static bool TryGetFriendAvailability(string friendName, out FriendAvailabilityState state)
+        {
+            state = FriendAvailabilityState.Unknown;
+            if (string.IsNullOrWhiteSpace(friendName)) return false;
+            try
+            {
+                if (GameData.CurrentCharacterSlot == null || GameData.SimMngr == null || GameData.SimMngr.Sims == null)
+                    return false;
+
+                int currentSlot = GameData.CurrentCharacterSlot.index;
+                string characterKey;
+                if (!FriendAvailability.TryComposeCharacterKey(currentSlot, GameData.CurrentCharacterSlot.CharName, out characterKey))
+                    return false;
+
+                long epoch = FriendAvailability.GetEpoch(DateTime.UtcNow);
+                string requested = friendName.Trim();
+                List<SimPlayerTracking> sims = GameData.SimMngr.Sims;
+                for (int i = 0; i < sims.Count; i++)
+                {
+                    SimPlayerTracking tracking = sims[i];
+                    string name = ReadTrackingName(tracking);
+                    if (!string.Equals(name, requested, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    bool isFriend;
+                    try
+                    {
+                        isFriend = tracking != null && NativeFriendRosterPolicy.IsCurrentCharacterFriend(
+                            tracking.FriendedBy, currentSlot, tracking.IsGMCharacter);
+                    }
+                    catch { continue; }
+                    if (!isFriend) continue;
+
+                    int simIndex;
+                    try { simIndex = tracking.simIndex; }
+                    catch { return false; }
+                    string friendKey;
+                    if (!FriendAvailability.TryComposeFriendKey(simIndex, name, out friendKey)) return false;
+
+                    FriendAvailabilityState simulated;
+                    if (!FriendAvailability.TryGetSimulatedState(characterKey, friendKey, epoch, out simulated)) return false;
+                    bool inCurrentParty = IsCurrentPartyTracking(tracking);
+                    SimPlayer avatar = SafeAvatar(tracking);
+                    if (!inCurrentParty && avatar != null) inCurrentParty = IsCurrentPartySim(avatar);
+                    state = FriendAvailability.ApplyObservedPresence(simulated, inCurrentParty, IsPhysicallyPresentLocalFriend(avatar));
+                    return true;
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        // Historical contract: native Friends membership is authoritative, while the returned
+        // state is the deterministic base state at the requested UTC instant. Current party and
+        // scene-presence observations intentionally do not rewrite history.
+        internal static bool TryGetBaseFriendAvailabilityAtUtc(
+            string friendName,
+            long utcTicks,
+            out FriendAvailabilityState state)
+        {
+            state = FriendAvailabilityState.Unknown;
+            if (string.IsNullOrWhiteSpace(friendName)) return false;
+            List<Dictionary<string, string>> snapshot = BuildBaseFriendAvailabilitySnapshotAtUtc(utcTicks);
+            string requested = friendName.Trim();
+            for (int i = 0; i < snapshot.Count; i++)
+            {
+                string name;
+                string availability;
+                if (!snapshot[i].TryGetValue("name", out name) ||
+                    !string.Equals(name, requested, StringComparison.OrdinalIgnoreCase) ||
+                    !snapshot[i].TryGetValue("availability", out availability)) continue;
+                state = string.Equals(availability, "Online", StringComparison.Ordinal)
+                    ? FriendAvailabilityState.Online
+                    : FriendAvailabilityState.Offline;
+                return true;
+            }
+            return false;
+        }
+
+        internal static List<Dictionary<string, string>> BuildBaseFriendAvailabilitySnapshotAtUtc(long utcTicks)
+        {
+            List<Dictionary<string, string>> result = new List<Dictionary<string, string>>();
+            try
+            {
+                if (utcTicks < DateTime.MinValue.Ticks || utcTicks > DateTime.MaxValue.Ticks ||
+                    GameData.CurrentCharacterSlot == null || GameData.SimMngr == null || GameData.SimMngr.Sims == null)
+                    return result;
+
+                int currentSlot = GameData.CurrentCharacterSlot.index;
+                string characterKey;
+                if (!FriendAvailability.TryComposeCharacterKey(currentSlot, GameData.CurrentCharacterSlot.CharName, out characterKey))
+                    return result;
+
+                HashSet<string> seen = new HashSet<string>(StringComparer.Ordinal);
+                List<SimPlayerTracking> sims = GameData.SimMngr.Sims;
+                for (int i = 0; i < sims.Count; i++)
+                {
+                    SimPlayerTracking tracking = sims[i];
+                    if (tracking == null) continue;
+                    string name = ReadTrackingName(tracking);
+                    if (name.Length == 0) continue;
+
+                    bool isFriend;
+                    try
+                    {
+                        isFriend = NativeFriendRosterPolicy.IsCurrentCharacterFriend(
+                            tracking.FriendedBy, currentSlot, tracking.IsGMCharacter);
+                    }
+                    catch { continue; }
+                    if (!isFriend) continue;
+
+                    int simIndex;
+                    try { simIndex = tracking.simIndex; }
+                    catch { continue; }
+                    string friendKey;
+                    if (!FriendAvailability.TryComposeFriendKey(simIndex, name, out friendKey) || !seen.Add(friendKey)) continue;
+
+                    FriendAvailabilityState state;
+                    if (!FriendAvailability.TryGetBaseStateAtUtc(characterKey, friendKey, utcTicks, out state)) continue;
+                    result.Add(new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        { "name", name },
+                        { "stableId", friendKey },
+                        { "availability", state == FriendAvailabilityState.Online ? "Online" : "Offline" }
+                    });
+                }
+            }
+            catch { result.Clear(); }
+            return result;
         }
 
         internal static bool IsRaidActive()
@@ -263,14 +428,51 @@ namespace ErenshorPartyTools
             catch { return string.Empty; }
         }
 
-        private static string FriendAvailabilityText(FriendAvailabilityState state)
+        internal static string FriendAvailabilityText(FriendAvailabilityState state)
         {
             switch (state)
             {
-                case FriendAvailabilityState.Busy: return "BUSY";
+                case FriendAvailabilityState.InParty: return "IN PARTY";
+                case FriendAvailabilityState.Online: return "ONLINE";
                 case FriendAvailabilityState.Offline: return "OFFLINE";
-                default: return "AVAILABLE";
+                default: return "UNKNOWN";
             }
+        }
+
+        private static bool IsCurrentPartyTracking(SimPlayerTracking tracking)
+        {
+            if (tracking == null) return false;
+            SimPlayerTracking[] members = ReadGroupMembers();
+            if (members == null || members.Length == 0) return false;
+            for (int i = 0; i < members.Length; i++)
+            {
+                SimPlayerTracking member = members[i];
+                if (member == null) continue;
+                if (object.ReferenceEquals(member, tracking)) return true;
+                try
+                {
+                    if (FriendAvailability.SameNativeFriendIdentity(
+                        tracking.simIndex, tracking.SimName, member.simIndex, member.SimName)) return true;
+                }
+                catch { }
+            }
+            return false;
+        }
+
+        private static bool IsPhysicallyPresentLocalFriend(SimPlayer sim)
+        {
+            if (!IsAvailableSim(sim)) return false;
+            if (CoopCompatibility.IsRemoteCoopHuman(sim) || CoopCompatibility.IsRemoteCoopSim(sim)) return false;
+            try
+            {
+                // A live avatar is only a real presence override when the Sim itself belongs
+                // to the active Erenshor zone. Do not compare against the player's persistent
+                // GameObject scene (which can live in DontDestroyOnLoad).
+                Scene activeScene = SceneManager.GetActiveScene();
+                return activeScene.IsValid() && sim.gameObject.scene.IsValid() &&
+                       sim.gameObject.scene.handle == activeScene.handle;
+            }
+            catch { return false; }
         }
 
         private static bool IsCurrentPartySim(SimPlayer sim)
